@@ -3,7 +3,8 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer, MinMaxScaler, StandardScaler
 
 def transform_df(
-        df, imputer_fitted, std_scaler, power_transformer, min_max_scaler,
+        df,
+        imputer_fitted, ohe, std_scaler, power_transformer, min_max_scaler,
         do_log_transform = True
         ):
     """
@@ -28,18 +29,11 @@ def transform_df(
         (df["session_length_in_minutes"]==-1) |
         (df["device_distinct_emails_8w"]==-1)].index
     df = df.drop(missing_idx)
-    # OHE categorical cols
+    # Define cols by type
     one_hot_cols = [
         "payment_type", "employment_status", "housing_status",
         "source", "device_os"
     ]
-    df = one_hot(df, one_hot_cols)
-    # Impute data for "missing not at random" values
-    df[df["current_address_months_count"]==-1] = np.nan #Only column we want imputed
-    num_cols = df.select_dtypes(include=np.number).columns.tolist()
-    num_cols.remove("fraud_bool") # ignore target
-    df.loc[:,num_cols] = imputer_fitted.transform(df.loc[:,num_cols])
-    # Scaling
     skewed_cols = [
     "days_since_request", "intended_balcon_amount", "proposed_credit_limit",
     "current_address_months_count", "prev_address_months_count",
@@ -53,6 +47,21 @@ def transform_df(
     minmax_cols = [
         "income", "name_email_similarity", "velocity_4w", "customer_age", "month"
     ]
+
+    # Do OHE
+    cols = ohe.get_feature_names_out(one_hot_cols)
+    enc = pd.DataFrame(ohe.transform(np.array(df[one_hot_cols])), columns=cols)
+    enc.index = df.index
+    df = df.join(enc)
+    df = df.drop(one_hot_cols, axis=1)
+
+    # Impute data for "missing not at random" values
+    df.loc[df["current_address_months_count"]==-1,"current_address_months_count"] = np.nan #Only column we want imputed
+    num_cols = skewed_cols + std_cols + minmax_cols
+    if "target" in num_cols: num_cols.remove("target")
+    df.loc[:,num_cols] = imputer_fitted.transform(df.loc[:,num_cols])
+    
+    # Scaling
     log_cols = ["session_length_in_minutes"]
     if do_log_transform: df[log_cols] = np.log(df[log_cols] + 2)
     #df[std_cols] = std_scaler.transform(df[std_cols])
@@ -65,6 +74,7 @@ def transform_df(
 def one_hot(df: pd.DataFrame, cols):
     for col in cols:
         for cat in df[col].unique():
-            df[f"{col}_{cat}"] = df[col]==cat
+            if isinstance(cat,str): # unique method returns nan for header row
+                df[f"{col}_{cat}"] = df[col]==cat
     df = df.drop(columns=cols)
     return df
